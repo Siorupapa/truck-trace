@@ -8,9 +8,16 @@
     [hidden] { display: none !important; }
     body { margin: 0; font-family: sans-serif; }
     #topbar { padding: 10px 12px; background: #f4f4f4; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
-    #authBox { padding: 12px; }
-    input { display: block; width: 100%; max-width: 320px; box-sizing: border-box; margin: 6px 0; padding: 10px; font-size: 16px; }
+    #authBox, #ownerBox { padding: 12px; }
+    #ownerBox { border-top: 1px solid #ddd; border-bottom: 1px solid #ddd; background: #fffbea; }
+    input, select { display: block; width: 100%; max-width: 320px; box-sizing: border-box; margin: 6px 0; padding: 10px; font-size: 16px; }
     button { padding: 10px 14px; font-size: 16px; margin: 4px 4px 4px 0; }
+    label { display: block; margin-top: 12px; font-weight: bold; }
+    label.check { display: inline-block; margin-right: 12px; font-weight: normal; }
+    label.check input { display: inline-block; width: auto; margin-right: 4px; }
+    .row { display: flex; gap: 6px; align-items: center; max-width: 360px; }
+    .row input { margin: 4px 0; }
+    #photoPreview { max-width: 240px; width: 100%; display: block; margin-top: 8px; border-radius: 8px; }
     #msg { padding: 0 12px; color: #555; min-height: 1.2em; }
     #map { width: 100%; height: 55vh; }
   </style>
@@ -33,6 +40,38 @@
     <button id="signupBtn">가입하기</button>
   </div>
 
+  <div id="ownerBox" hidden>
+    <h3 style="margin: 0 0 4px;">내 트럭 정보</h3>
+
+    <label>트럭 이름</label>
+    <input id="truckName" maxlength="30" placeholder="예: 한강 순대트럭">
+
+    <label>음식 종류</label>
+    <select id="foodType"></select>
+    <div id="subTypeBox" hidden>
+      <label>세부 항목</label>
+      <select id="subType"></select>
+      <input id="customFood" maxlength="30" placeholder="음식 이름을 직접 입력" hidden>
+    </div>
+
+    <label>메뉴와 가격</label>
+    <div id="menuRows"></div>
+    <button id="addMenuBtn" type="button">+ 메뉴 추가</button>
+
+    <label>결제 방식</label>
+    <div id="payBox">
+      <label class="check"><input type="checkbox" value="현금">현금</label>
+      <label class="check"><input type="checkbox" value="계좌이체">계좌이체</label>
+      <label class="check"><input type="checkbox" value="카드">카드</label>
+    </div>
+
+    <label>트럭 사진 (트럭 전체와 간판이 보이게)</label>
+    <input id="photoInput" type="file" accept="image/*">
+    <img id="photoPreview" alt="" hidden>
+
+    <button id="saveTruckBtn">등록하기</button>
+  </div>
+
   <p id="msg"></p>
   <div id="map"></div>
   <button id="locBtn">내 위치로 이동</button>
@@ -45,22 +84,271 @@
       'sb_publishable_HEZVmP6gHAkHV0l8ud7gYQ_Lo0MKDnv'
     );
 
-    var msg = document.getElementById('msg');
-    var statusEl = document.getElementById('statusEl');
-    var currentProfile = null;
-
     function $(id) { return document.getElementById(id); }
+    var msg = $('msg');
+    var statusEl = $('statusEl');
+    var currentProfile = null;
+    var foodTypes = [];
+    var myTruck = null;
+    var photoUrl = null;
+    var loadedFor = null;
 
+    // ---------- 공통 도구 ----------
+    function addOption(sel, value, text) {
+      var o = document.createElement('option');
+      o.value = value;
+      o.textContent = text;
+      sel.appendChild(o);
+    }
+
+    function showPreview(url) {
+      if (url) { $('photoPreview').src = url; $('photoPreview').hidden = false; }
+      else { $('photoPreview').hidden = true; }
+    }
+
+    function compressImage(file, maxSize, quality) {
+      return new Promise(function (resolve, reject) {
+        var img = new Image();
+        var url = URL.createObjectURL(file);
+        img.onload = function () {
+          var scale = Math.min(1, maxSize / Math.max(img.width, img.height));
+          var canvas = document.createElement('canvas');
+          canvas.width = Math.round(img.width * scale);
+          canvas.height = Math.round(img.height * scale);
+          canvas.getContext('2d').drawImage(img, 0, 0, canvas.width, canvas.height);
+          URL.revokeObjectURL(url);
+          canvas.toBlob(function (blob) {
+            if (blob) resolve(blob); else reject(new Error('사진을 줄이지 못했어요.'));
+          }, 'image/jpeg', quality);
+        };
+        img.onerror = function () { reject(new Error('사진을 읽지 못했어요.')); };
+        img.src = url;
+      });
+    }
+
+    // ---------- 음식 종류 ----------
+    async function loadFoodTypes() {
+      var r = await db.from('food_types').select('id, name, parent_id, sort_order').order('sort_order');
+      if (r.error) { msg.textContent = '음식 종류를 불러오지 못했어요: ' + r.error.message; return; }
+      foodTypes = r.data;
+      var sel = $('foodType');
+      sel.innerHTML = '';
+      addOption(sel, '', '선택하세요');
+      foodTypes.filter(function (t) { return t.parent_id === null; })
+               .forEach(function (t) { addOption(sel, t.id, t.name); });
+    }
+
+    function selectedTopType() {
+      var id = Number($('foodType').value);
+      return foodTypes.find(function (t) { return t.id === id; }) || null;
+    }
+
+    function updateCustomUi() { $('customFood').hidden = $('subType').value !== 'custom'; }
+
+    function updateSubTypeUi() {
+      var top = selectedTopType();
+      var isEtc = !!top && top.name === '기타';
+      $('subTypeBox').hidden = !isEtc;
+      if (!isEtc) return;
+      var sel = $('subType');
+      sel.innerHTML = '';
+      addOption(sel, '', '선택하세요');
+      foodTypes.filter(function (t) { return t.parent_id === top.id; })
+               .forEach(function (t) { addOption(sel, t.id, t.name); });
+      addOption(sel, 'custom', '목록에 없어요 (직접 입력)');
+      updateCustomUi();
+    }
+
+    $('foodType').onchange = updateSubTypeUi;
+    $('subType').onchange = updateCustomUi;
+
+    // ---------- 메뉴 입력 줄 ----------
+    function addMenuRow(name, price) {
+      var row = document.createElement('div');
+      row.className = 'row';
+      var n = document.createElement('input');
+      n.placeholder = '메뉴명';
+      n.maxLength = 30;
+      n.value = name || '';
+      var p = document.createElement('input');
+      p.placeholder = '가격(원)';
+      p.type = 'number';
+      p.min = '0';
+      p.value = (price === undefined || price === null) ? '' : price;
+      var x = document.createElement('button');
+      x.type = 'button';
+      x.textContent = '삭제';
+      x.onclick = function () { row.remove(); };
+      row.appendChild(n);
+      row.appendChild(p);
+      row.appendChild(x);
+      $('menuRows').appendChild(row);
+    }
+
+    $('addMenuBtn').onclick = function () { addMenuRow(); };
+
+    function readMenu() {
+      var items = [];
+      var rows = $('menuRows').children;
+      for (var i = 0; i < rows.length; i++) {
+        var inputs = rows[i].querySelectorAll('input');
+        var name = inputs[0].value.trim();
+        var priceText = inputs[1].value.trim();
+        if (!name && !priceText) continue;
+        var price = Number(priceText);
+        if (!name || priceText === '' || isNaN(price) || price < 0) return null;
+        items.push({ name: name, price: price });
+      }
+      return items;
+    }
+
+    function readPayments() {
+      var boxes = document.querySelectorAll('#payBox input:checked');
+      return Array.prototype.map.call(boxes, function (c) { return c.value; });
+    }
+
+    $('photoInput').onchange = function () {
+      var f = this.files[0];
+      if (f) showPreview(URL.createObjectURL(f));
+    };
+
+    // ---------- 내 트럭 불러오기 / 채우기 ----------
+    function fillForm() {
+      $('menuRows').innerHTML = '';
+      var checks = document.querySelectorAll('#payBox input');
+      Array.prototype.forEach.call(checks, function (c) { c.checked = false; });
+      $('photoInput').value = '';
+
+      if (!myTruck) {
+        $('truckName').value = '';
+        $('foodType').value = '';
+        updateSubTypeUi();
+        addMenuRow();
+        photoUrl = null;
+        showPreview(null);
+        $('saveTruckBtn').textContent = '등록하기';
+        return;
+      }
+
+      $('truckName').value = myTruck.name;
+      $('foodType').value = String(myTruck.food_type_id);
+      updateSubTypeUi();
+      if (myTruck.sub_type_id) {
+        $('subType').value = String(myTruck.sub_type_id);
+      } else if (myTruck.custom_food_name) {
+        $('subType').value = 'custom';
+        $('customFood').value = myTruck.custom_food_name;
+      }
+      updateCustomUi();
+
+      var menu = myTruck.menu || [];
+      menu.forEach(function (m) { addMenuRow(m.name, m.price); });
+      if (menu.length === 0) addMenuRow();
+
+      var pays = myTruck.payment_methods || [];
+      Array.prototype.forEach.call(checks, function (c) { c.checked = pays.indexOf(c.value) !== -1; });
+
+      photoUrl = myTruck.photo_url;
+      showPreview(photoUrl);
+      $('saveTruckBtn').textContent = '수정 저장하기';
+    }
+
+    async function loadMyTruck(userId) {
+      var r = await db.from('trucks').select('*').eq('owner_id', userId).order('created_at').limit(1);
+      if (r.error) { msg.textContent = '내 트럭을 불러오지 못했어요: ' + r.error.message; return; }
+      myTruck = r.data.length ? r.data[0] : null;
+      fillForm();
+    }
+
+    // ---------- 저장 ----------
+    $('saveTruckBtn').onclick = async function () {
+      var btn = this;
+      var session = (await db.auth.getSession()).data.session;
+      if (!session) { msg.textContent = '먼저 로그인해 주세요.'; return; }
+
+      var name = $('truckName').value.trim();
+      var top = selectedTopType();
+      if (!name) { msg.textContent = '트럭 이름을 입력해 주세요.'; return; }
+      if (!top) { msg.textContent = '음식 종류를 선택해 주세요.'; return; }
+
+      var subTypeId = null;
+      var customName = null;
+      if (top.name === '기타') {
+        var sv = $('subType').value;
+        if (sv === 'custom') {
+          customName = $('customFood').value.trim();
+          if (!customName) { msg.textContent = '음식 이름을 직접 입력해 주세요.'; return; }
+        } else if (sv) {
+          subTypeId = Number(sv);
+        } else {
+          msg.textContent = '세부 항목을 선택하거나 직접 입력해 주세요.';
+          return;
+        }
+      }
+
+      var menu = readMenu();
+      if (menu === null) { msg.textContent = '메뉴명과 가격을 모두 입력하거나, 빈 줄은 삭제해 주세요.'; return; }
+      if (menu.length === 0) { msg.textContent = '메뉴를 하나 이상 입력해 주세요.'; return; }
+
+      var files = $('photoInput').files;
+      if (!photoUrl && files.length === 0) { msg.textContent = '트럭 사진을 선택해 주세요.'; return; }
+
+      btn.disabled = true;
+      msg.textContent = '저장하는 중...';
+      try {
+        if (files.length > 0) {
+          var blob = await compressImage(files[0], 1280, 0.8);
+          var path = session.user.id + '/' + Date.now() + '.jpg';
+          var up = await db.storage.from('truck-photos').upload(path, blob, { contentType: 'image/jpeg' });
+          if (up.error) throw up.error;
+          photoUrl = db.storage.from('truck-photos').getPublicUrl(path).data.publicUrl;
+        }
+
+        var payload = {
+          name: name,
+          food_type_id: top.id,
+          sub_type_id: subTypeId,
+          custom_food_name: customName,
+          menu: menu,
+          payment_methods: readPayments(),
+          photo_url: photoUrl
+        };
+
+        var r;
+        if (myTruck) {
+          r = await db.from('trucks').update(payload).eq('id', myTruck.id).select().single();
+        } else {
+          payload.owner_id = session.user.id;
+          r = await db.from('trucks').insert(payload).select().single();
+        }
+        if (r.error) throw r.error;
+
+        myTruck = r.data;
+        $('photoInput').value = '';
+        showPreview(photoUrl);
+        $('saveTruckBtn').textContent = '수정 저장하기';
+        msg.textContent = '저장했어요!';
+      } catch (e) {
+        msg.textContent = '저장하지 못했어요: ' + (e.message || e);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    // ---------- 로그인 ----------
     async function refresh() {
       var res = await db.auth.getSession();
       var session = res.data.session;
 
       if (!session) {
         currentProfile = null;
+        loadedFor = null;
+        myTruck = null;
         statusEl.textContent = '로그인하지 않았어요';
         $('ownerBtn').hidden = true;
         $('logoutBtn').hidden = true;
         $('showAuthBtn').hidden = false;
+        $('ownerBox').hidden = true;
         return;
       }
 
@@ -78,6 +366,13 @@
       statusEl.textContent = currentProfile.nickname + ' 님' + (currentProfile.is_owner ? ' (사장님 모드)' : '');
       $('ownerBtn').hidden = false;
       $('ownerBtn').textContent = currentProfile.is_owner ? '사장님 모드 끄기' : '사장님 모드 켜기';
+      $('ownerBox').hidden = !currentProfile.is_owner;
+
+      if (currentProfile.is_owner && loadedFor !== session.user.id) {
+        loadedFor = session.user.id;
+        await foodTypesReady;
+        await loadMyTruck(session.user.id);
+      }
     }
 
     $('showAuthBtn').onclick = function () { $('authBox').hidden = false; };
@@ -117,8 +412,10 @@
       await refresh();
     };
 
+    var foodTypesReady = loadFoodTypes();
     refresh();
 
+    // ---------- 지도 ----------
     kakao.maps.load(function () {
       var center = new kakao.maps.LatLng(37.5665, 126.9780);
       var map = new kakao.maps.Map($('map'), { center: center, level: 4 });
