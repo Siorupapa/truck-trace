@@ -605,7 +605,7 @@
         ul.appendChild(li);
       });
       var pays = (t.payment_methods || []).join(', ');
-      $('dPay').textContent = '결제: ' + (pays || '정보 없음');
+      $('dPay').textContent = '결제 : ' + (pays || '정보 없음');
       $('dEnd').textContent = '영업 종료 예정 ' + fmtTime(op.planned_end_at) + ' (사장님이 정한 시간이에요)';
       $('detail').hidden = false;
       $('detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
