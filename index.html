@@ -27,11 +27,11 @@
     #filterBar select { width: auto; margin: 0; }
     #map { width: 100%; height: 55vh; }
     .pinLabel { background: #fff; border: 1px solid #333; border-radius: 12px; padding: 2px 8px; font-size: 13px; font-weight: bold; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,0.3); cursor: pointer; }
+    .reportLabel { border-style: dashed; background: #f1f8ff; }
+    #reportBox { padding: 12px; border-top: 1px solid #ddd; background: #f1f8ff; }
     #detail { padding: 12px; border-top: 1px solid #ddd; }
     #detail img { max-width: 100%; max-height: 240px; border-radius: 8px; display: block; }
     #detail ul { padding-left: 20px; margin: 6px 0; }
-    .reportLabel { border-style: dashed; background: #f1f8ff; }
-    #reportBox { padding: 12px; border-top: 1px solid #ddd; background: #f1f8ff; }
   </style>
 </head>
 <body>
@@ -121,7 +121,7 @@
   <div id="map"></div>
   <button id="locBtn">내 위치로 이동</button>
   <button id="reportBtn">제보하기</button>
-  
+
   <div id="reportBox" hidden>
     <h3 style="margin: 0 0 4px;">트럭 제보하기</h3>
     <div id="reportMsg" style="color: #555; min-height: 1.2em;"></div>
@@ -152,6 +152,7 @@
 
     <button id="rCancelBtn" type="button" style="margin-top: 12px;">취소</button>
   </div>
+
   <div id="detail" hidden>
     <img id="dPhoto" alt="" hidden>
     <h3 id="dName" style="margin: 8px 0 2px;"></h3>
@@ -165,11 +166,11 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=3cc551cae35635f614a0f20be5e55c3e&autoload=false"></script>
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=여기에_카카오_JavaScript_키&autoload=false"></script>
   <script>
     var db = supabase.createClient(
-      'https://wzapvxusmrffckciclfc.supabase.co',
-      'sb_publishable_HEZVmP6gHAkHV0l8ud7gYQ_Lo0MKDnv'
+      '여기에_Supabase_프로젝트_URL',
+      '여기에_Supabase_공개용_키'
     );
 
     function $(id) { return document.getElementById(id); }
@@ -791,6 +792,7 @@
       if (r.error) { msg.textContent = '변경하지 못했어요: ' + r.error.message; return; }
       await refresh();
     };
+
     // ---------- 손님 제보 ----------
     var reportData = [];
     var rPos = null;
@@ -819,9 +821,9 @@
 
     async function loadReports() {
       var r = await db.from('reports')
-        .select('id, lat, lng, truck_id, food_type_id, sub_type_id, custom_food_name, photo_url, expires_at, profiles(nickname, report_count), confirm_count, trucks(id, name, menu, payment_methods, photo_url)')
+        .select('id, lat, lng, truck_id, food_type_id, sub_type_id, custom_food_name, photo_url, expires_at, confirm_count, profiles(nickname, report_count), trucks(id, name, menu, payment_methods, photo_url)')
         .gt('expires_at', new Date().toISOString());
-      if (r.error) { msg.textContent = '제보 정보를 불러오지 못했어요: ' + r.error.message; return; }
+      if (r.error) { msg.textContent = '제보 정보를 불러오지 못했어요: ' + r.error.message; reportData = []; return; }
       var openTruckIds = pinData.map(function (o) { return o.trucks.id; });
       reportData = r.data.filter(function (x) {
         return !(x.truck_id && openTruckIds.indexOf(x.truck_id) !== -1);
@@ -1125,6 +1127,7 @@
         btn.disabled = false;
       }
     };
+
     // ---------- 시작 ----------
     var foodTypesReady = loadFoodTypes();
     refresh();
