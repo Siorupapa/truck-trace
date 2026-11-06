@@ -4,9 +4,45 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>트럭 지도 테스트</title>
+  <style>
+    body { margin: 0; font-family: sans-serif; }
+    #map { width: 100%; height: 70vh; }
+    button { margin: 12px; padding: 12px 16px; font-size: 16px; }
+    #msg { margin: 0 12px; color: #555; }
+  </style>
 </head>
 <body>
-  <h1>안녕하세요</h1>
-  <p>페이지가 열렸어요.</p>
+  <div id="map"></div>
+  <button id="locBtn">내 위치로 이동</button>
+  <p id="msg"></p>
+
+  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=6c3f63aaf514007659860b2a06bcb37b&autoload=false"></script>
+  <script>
+    kakao.maps.load(function () {
+      var center = new kakao.maps.LatLng(37.5665, 126.9780);
+      var map = new kakao.maps.Map(document.getElementById('map'), {
+        center: center,
+        level: 4
+      });
+      var marker = new kakao.maps.Marker({ map: map, position: center });
+      var msg = document.getElementById('msg');
+
+      document.getElementById('locBtn').onclick = function () {
+        if (!navigator.geolocation) {
+          msg.textContent = '이 브라우저는 위치 기능을 지원하지 않아요.';
+          return;
+        }
+        msg.textContent = '위치를 확인하는 중...';
+        navigator.geolocation.getCurrentPosition(function (pos) {
+          var p = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+          map.setCenter(p);
+          marker.setPosition(p);
+          msg.textContent = '내 위치로 이동했어요.';
+        }, function () {
+          msg.textContent = '위치를 가져오지 못했어요. 브라우저의 위치 권한을 확인해 주세요.';
+        });
+      };
+    });
+  </script>
 </body>
 </html>
