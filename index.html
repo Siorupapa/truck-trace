@@ -677,7 +677,7 @@
       await mapReady;
       await foodTypesReady;
       var r = await db.from('operations')
-        .select('id, lat, lng, planned_end_at, confirmations(count), trucks(id, name, food_type_id, sub_type_id, custom_food_name, menu, payment_methods, photo_url)')
+        .select('id, lat, lng, planned_end_at, confirm_count, trucks(id, name, food_type_id, sub_type_id, custom_food_name, menu, payment_methods, photo_url)')
         .is('ended_at', null)
         .gt('planned_end_at', new Date().toISOString());
       if (r.error) { msg.textContent = '지도 정보를 불러오지 못했어요: ' + r.error.message; return; }
@@ -808,7 +808,7 @@
     }
 
     function confCount(x) {
-      return x.confirmations && x.confirmations[0] ? x.confirmations[0].count : 0;
+      return x.confirm_count || 0;
     }
 
     function confirmErrorText(e) {
@@ -819,7 +819,7 @@
 
     async function loadReports() {
       var r = await db.from('reports')
-        .select('id, lat, lng, truck_id, food_type_id, sub_type_id, custom_food_name, photo_url, expires_at, profiles(nickname, report_count), confirmations(count), trucks(id, name, menu, payment_methods, photo_url)')
+        .select('id, lat, lng, truck_id, food_type_id, sub_type_id, custom_food_name, photo_url, expires_at, profiles(nickname, report_count), confirm_count, trucks(id, name, menu, payment_methods, photo_url)')
         .gt('expires_at', new Date().toISOString());
       if (r.error) { msg.textContent = '제보 정보를 불러오지 못했어요: ' + r.error.message; return; }
       var openTruckIds = pinData.map(function (o) { return o.trucks.id; });
