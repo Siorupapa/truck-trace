@@ -15,8 +15,10 @@
     label { display: block; margin-top: 12px; font-weight: bold; }
     label.check { display: inline-block; margin-right: 12px; font-weight: normal; }
     label.check input { display: inline-block; width: auto; margin-right: 4px; }
-    .row { display: flex; gap: 6px; align-items: center; max-width: 360px; }
-    .row input { margin: 4px 0; }
+    .row { display: flex; gap: 6px; align-items: center; max-width: 380px; }
+    .row input { margin: 4px 0; flex: 1; min-width: 0; max-width: none; }
+    .row input.price { flex: 0 0 90px; text-align: right; }
+    .row span { white-space: nowrap; }
     #photoPreview { max-width: 240px; width: 100%; display: block; margin-top: 8px; border-radius: 8px; }
     #msg { padding: 0 12px; color: #555; min-height: 1.2em; }
     #map { width: 100%; height: 55vh; }
@@ -100,7 +102,11 @@
       o.textContent = text;
       sel.appendChild(o);
     }
-
+    
+    function formatWon(n) {
+      return Number(n).toLocaleString('ko-KR');
+    }
+    
     function showPreview(url) {
       if (url) { $('photoPreview').src = url; $('photoPreview').hidden = false; }
       else { $('photoPreview').hidden = true; }
@@ -171,16 +177,24 @@
       n.maxLength = 30;
       n.value = name || '';
       var p = document.createElement('input');
-      p.placeholder = '가격(원)';
-      p.type = 'number';
-      p.min = '0';
-      p.value = (price === undefined || price === null) ? '' : price;
+      p.placeholder = '가격';
+      p.type = 'text';
+      p.inputMode = 'numeric';
+      p.className = 'price';
+      p.value = (price === undefined || price === null) ? '' : formatWon(price);
+      p.oninput = function () {
+        var digits = p.value.replace(/[^0-9]/g, '').slice(0, 7);
+        p.value = digits === '' ? '' : formatWon(digits);
+      };
+      var won = document.createElement('span');
+      won.textContent = '원';
       var x = document.createElement('button');
       x.type = 'button';
       x.textContent = '삭제';
       x.onclick = function () { row.remove(); };
       row.appendChild(n);
       row.appendChild(p);
+      row.appendChild(won);
       row.appendChild(x);
       $('menuRows').appendChild(row);
     }
@@ -193,11 +207,10 @@
       for (var i = 0; i < rows.length; i++) {
         var inputs = rows[i].querySelectorAll('input');
         var name = inputs[0].value.trim();
-        var priceText = inputs[1].value.trim();
-        if (!name && !priceText) continue;
-        var price = Number(priceText);
-        if (!name || priceText === '' || isNaN(price) || price < 0) return null;
-        items.push({ name: name, price: price });
+        var digits = inputs[1].value.replace(/[^0-9]/g, '');
+        if (!name && digits === '') continue;
+        if (!name || digits === '') return null;
+        items.push({ name: name, price: Number(digits) });
       }
       return items;
     }
