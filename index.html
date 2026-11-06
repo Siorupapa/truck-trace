@@ -3,35 +3,129 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>트럭 지도 테스트</title>
+  <title>트럭 지도</title>
   <style>
+    [hidden] { display: none !important; }
     body { margin: 0; font-family: sans-serif; }
-    #map { width: 100%; height: 70vh; }
-    button { margin: 12px; padding: 12px 16px; font-size: 16px; }
-    #msg { margin: 0 12px; color: #555; }
+    #topbar { padding: 10px 12px; background: #f4f4f4; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #authBox { padding: 12px; }
+    input { display: block; width: 100%; max-width: 320px; box-sizing: border-box; margin: 6px 0; padding: 10px; font-size: 16px; }
+    button { padding: 10px 14px; font-size: 16px; margin: 4px 4px 4px 0; }
+    #msg { padding: 0 12px; color: #555; min-height: 1.2em; }
+    #map { width: 100%; height: 55vh; }
   </style>
 </head>
 <body>
+  <div id="topbar">
+    <span id="statusEl">확인 중...</span>
+    <span>
+      <button id="ownerBtn" hidden></button>
+      <button id="logoutBtn" hidden>로그아웃</button>
+      <button id="showAuthBtn" hidden>로그인 / 가입</button>
+    </span>
+  </div>
+
+  <div id="authBox" hidden>
+    <input id="nicknameInput" placeholder="닉네임 (가입할 때만)" maxlength="20">
+    <input id="emailInput" type="email" placeholder="이메일">
+    <input id="passwordInput" type="password" placeholder="비밀번호 (6자 이상)">
+    <button id="loginBtn">로그인</button>
+    <button id="signupBtn">가입하기</button>
+  </div>
+
+  <p id="msg"></p>
   <div id="map"></div>
   <button id="locBtn">내 위치로 이동</button>
-  <p id="msg"></p>
 
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=3cc551cae35635f614a0f20be5e55c3e&autoload=false"></script>
   <script>
+    var db = supabase.createClient(
+      'https://wzapvxusmrffckciclfc.supabase.co/rest/v1/',
+      'sb_publishable_HEZVmP6gHAkHV0l8ud7gYQ_Lo0MKDnv'
+    );
+
+    var msg = document.getElementById('msg');
+    var statusEl = document.getElementById('statusEl');
+    var currentProfile = null;
+
+    function $(id) { return document.getElementById(id); }
+
+    async function refresh() {
+      var res = await db.auth.getSession();
+      var session = res.data.session;
+
+      if (!session) {
+        currentProfile = null;
+        statusEl.textContent = '로그인하지 않았어요';
+        $('ownerBtn').hidden = true;
+        $('logoutBtn').hidden = true;
+        $('showAuthBtn').hidden = false;
+        return;
+      }
+
+      $('authBox').hidden = true;
+      $('showAuthBtn').hidden = true;
+      $('logoutBtn').hidden = false;
+
+      var p = await db.from('profiles').select('nickname, is_owner').eq('id', session.user.id).single();
+      if (p.error) {
+        statusEl.textContent = '로그인됨 (프로필을 불러오지 못했어요)';
+        msg.textContent = '프로필 오류: ' + p.error.message;
+        return;
+      }
+      currentProfile = p.data;
+      statusEl.textContent = currentProfile.nickname + ' 님' + (currentProfile.is_owner ? ' (사장님 모드)' : '');
+      $('ownerBtn').hidden = false;
+      $('ownerBtn').textContent = currentProfile.is_owner ? '사장님 모드 끄기' : '사장님 모드 켜기';
+    }
+
+    $('showAuthBtn').onclick = function () { $('authBox').hidden = false; };
+
+    $('signupBtn').onclick = async function () {
+      var r = await db.auth.signUp({
+        email: $('emailInput').value.trim(),
+        password: $('passwordInput').value,
+        options: { data: { nickname: $('nicknameInput').value.trim() } }
+      });
+      if (r.error) { msg.textContent = '가입 실패: ' + r.error.message; return; }
+      msg.textContent = r.data.session ? '가입 완료! 로그인됐어요.' : '확인 메일을 보냈어요. 메일의 링크를 눌러주세요.';
+      await refresh();
+    };
+
+    $('loginBtn').onclick = async function () {
+      var r = await db.auth.signInWithPassword({
+        email: $('emailInput').value.trim(),
+        password: $('passwordInput').value
+      });
+      if (r.error) { msg.textContent = '로그인 실패: ' + r.error.message; return; }
+      msg.textContent = '로그인됐어요.';
+      await refresh();
+    };
+
+    $('logoutBtn').onclick = async function () {
+      await db.auth.signOut();
+      msg.textContent = '로그아웃했어요.';
+      await refresh();
+    };
+
+    $('ownerBtn').onclick = async function () {
+      var session = (await db.auth.getSession()).data.session;
+      if (!session || !currentProfile) return;
+      var r = await db.from('profiles').update({ is_owner: !currentProfile.is_owner }).eq('id', session.user.id);
+      if (r.error) { msg.textContent = '변경하지 못했어요: ' + r.error.message; return; }
+      await refresh();
+    };
+
+    refresh();
+
     kakao.maps.load(function () {
       var center = new kakao.maps.LatLng(37.5665, 126.9780);
-      var map = new kakao.maps.Map(document.getElementById('map'), {
-        center: center,
-        level: 4
-      });
+      var map = new kakao.maps.Map($('map'), { center: center, level: 4 });
       var marker = new kakao.maps.Marker({ map: map, position: center });
-      var msg = document.getElementById('msg');
 
-      document.getElementById('locBtn').onclick = function () {
-        if (!navigator.geolocation) {
-          msg.textContent = '이 브라우저는 위치 기능을 지원하지 않아요.';
-          return;
-        }
+      $('locBtn').onclick = function () {
+        if (!navigator.geolocation) { msg.textContent = '이 브라우저는 위치 기능을 지원하지 않아요.'; return; }
         msg.textContent = '위치를 확인하는 중...';
         navigator.geolocation.getCurrentPosition(function (pos) {
           var p = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
