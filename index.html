@@ -8,8 +8,10 @@
     [hidden] { display: none !important; }
     body { margin: 0; font-family: sans-serif; }
     #topbar { padding: 10px 12px; background: #f4f4f4; display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
+    #warnBanner { background: #ffe3e3; border-bottom: 2px solid #e03131; padding: 10px 12px; }
     #authBox, #ownerBox { padding: 12px; }
     #ownerBox { border-top: 1px solid #ddd; border-bottom: 1px solid #ddd; background: #fffbea; }
+    #opBox { margin-top: 16px; padding-top: 8px; border-top: 1px dashed #bbb; }
     input, select { display: block; width: 100%; max-width: 320px; box-sizing: border-box; margin: 6px 0; padding: 10px; font-size: 16px; }
     button { padding: 10px 14px; font-size: 16px; margin: 4px 4px 4px 0; }
     label { display: block; margin-top: 12px; font-weight: bold; }
@@ -21,7 +23,13 @@
     .row span { white-space: nowrap; }
     #photoPreview { max-width: 240px; width: 100%; display: block; margin-top: 8px; border-radius: 8px; }
     #msg { padding: 0 12px; color: #555; min-height: 1.2em; }
+    #filterBar { padding: 8px 12px; display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    #filterBar select { width: auto; margin: 0; }
     #map { width: 100%; height: 55vh; }
+    .pinLabel { background: #fff; border: 1px solid #333; border-radius: 12px; padding: 2px 8px; font-size: 13px; font-weight: bold; white-space: nowrap; box-shadow: 0 1px 3px rgba(0,0,0,0.3); cursor: pointer; }
+    #detail { padding: 12px; border-top: 1px solid #ddd; }
+    #detail img { max-width: 100%; max-height: 240px; border-radius: 8px; display: block; }
+    #detail ul { padding-left: 20px; margin: 6px 0; }
   </style>
 </head>
 <body>
@@ -32,6 +40,12 @@
       <button id="logoutBtn" hidden>로그아웃</button>
       <button id="showAuthBtn" hidden>로그인 / 가입</button>
     </span>
+  </div>
+
+  <div id="warnBanner" hidden>
+    <div id="warnText"></div>
+    <button id="warnExtendBtn">1시간 연장</button>
+    <button id="warnEndBtn">지금 종료</button>
   </div>
 
   <div id="authBox" hidden>
@@ -72,11 +86,48 @@
     <img id="photoPreview" alt="" hidden>
 
     <button id="saveTruckBtn">등록하기</button>
+
+    <div id="opBox" hidden>
+      <h3 style="margin: 0 0 4px;">영업</h3>
+      <div id="opIdle">
+        <label>영업 시간</label>
+        <select id="opHours">
+          <option value="2">2시간</option>
+          <option value="4" selected>4시간</option>
+          <option value="6">6시간</option>
+          <option value="8">8시간</option>
+          <option value="0.2">테스트용 12분</option>
+        </select>
+        <button id="opStartBtn">영업 시작 (현재 위치 저장)</button>
+      </div>
+      <div id="opActive" hidden>
+        <p id="opInfo"></p>
+        <button id="opExtendBtn">1시간 연장</button>
+        <button id="opEndBtn">영업 종료</button>
+      </div>
+    </div>
   </div>
 
   <p id="msg"></p>
+
+  <div id="filterBar">
+    <select id="filterType"></select>
+    <button id="reloadBtn">새로고침</button>
+    <span id="pinCount"></span>
+  </div>
+
   <div id="map"></div>
   <button id="locBtn">내 위치로 이동</button>
+
+  <div id="detail" hidden>
+    <img id="dPhoto" alt="" hidden>
+    <h3 id="dName" style="margin: 8px 0 2px;"></h3>
+    <div id="dType"></div>
+    <ul id="dMenu"></ul>
+    <div id="dPay"></div>
+    <div id="dEnd" style="color: #555; margin-top: 4px;"></div>
+    <button id="dClose">닫기</button>
+  </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=3cc551cae35635f614a0f20be5e55c3e&autoload=false"></script>
@@ -92,8 +143,14 @@
     var currentProfile = null;
     var foodTypes = [];
     var myTruck = null;
+    var myOp = null;
+    var warnStage = 0;
     var photoUrl = null;
     var loadedFor = null;
+    var map = null;
+    var mapMarkers = [];
+    var pinData = [];
+    var myCircle = null;
 
     // ---------- 공통 도구 ----------
     function addOption(sel, value, text) {
@@ -102,11 +159,15 @@
       o.textContent = text;
       sel.appendChild(o);
     }
-    
+
     function formatWon(n) {
       return Number(n).toLocaleString('ko-KR');
     }
-    
+
+    function fmtTime(iso) {
+      return new Date(iso).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
+    }
+
     function showPreview(url) {
       if (url) { $('photoPreview').src = url; $('photoPreview').hidden = false; }
       else { $('photoPreview').hidden = true; }
@@ -132,16 +193,34 @@
       });
     }
 
+    function getPosition() {
+      return new Promise(function (resolve, reject) {
+        if (!navigator.geolocation) {
+          reject(new Error('이 브라우저는 위치 기능을 지원하지 않아요.'));
+          return;
+        }
+        navigator.geolocation.getCurrentPosition(resolve, function () {
+          reject(new Error('위치를 가져오지 못했어요. 브라우저의 위치 권한을 확인해 주세요.'));
+        }, { enableHighAccuracy: true, timeout: 15000 });
+      });
+    }
+
     // ---------- 음식 종류 ----------
     async function loadFoodTypes() {
       var r = await db.from('food_types').select('id, name, parent_id, sort_order').order('sort_order');
       if (r.error) { msg.textContent = '음식 종류를 불러오지 못했어요: ' + r.error.message; return; }
       foodTypes = r.data;
+      var tops = foodTypes.filter(function (t) { return t.parent_id === null; });
+
       var sel = $('foodType');
       sel.innerHTML = '';
       addOption(sel, '', '선택하세요');
-      foodTypes.filter(function (t) { return t.parent_id === null; })
-               .forEach(function (t) { addOption(sel, t.id, t.name); });
+      tops.forEach(function (t) { addOption(sel, t.id, t.name); });
+
+      var fsel = $('filterType');
+      fsel.innerHTML = '';
+      addOption(fsel, '', '전체 음식');
+      tops.forEach(function (t) { addOption(fsel, t.id, t.name); });
     }
 
     function selectedTopType() {
@@ -271,9 +350,10 @@
       if (r.error) { msg.textContent = '내 트럭을 불러오지 못했어요: ' + r.error.message; return; }
       myTruck = r.data.length ? r.data[0] : null;
       fillForm();
+      await loadMyOp();
     }
 
-    // ---------- 저장 ----------
+    // ---------- 트럭 저장 ----------
     $('saveTruckBtn').onclick = async function () {
       var btn = this;
       var session = (await db.auth.getSession()).data.session;
@@ -340,11 +420,257 @@
         $('photoInput').value = '';
         showPreview(photoUrl);
         $('saveTruckBtn').textContent = '수정 저장하기';
+        renderOp();
         msg.textContent = '저장했어요!';
+        await loadPins();
       } catch (e) {
         msg.textContent = '저장하지 못했어요: ' + (e.message || e);
       } finally {
         btn.disabled = false;
+      }
+    };
+
+    // ---------- 영업 시작 / 연장 / 종료 ----------
+    function renderOp() {
+      $('opBox').hidden = !myTruck;
+      var active = !!myOp;
+      $('opIdle').hidden = active;
+      $('opActive').hidden = !active;
+      if (active) {
+        $('opInfo').textContent = '영업 중 · 종료 예정 ' + fmtTime(myOp.planned_end_at);
+      } else {
+        $('warnBanner').hidden = true;
+      }
+    }
+
+    function closeOp(op, whenIso) {
+      var whenMs = new Date(whenIso).getTime();
+      var minMs = new Date(op.started_at).getTime() + 1000;
+      var t = new Date(Math.max(whenMs, minMs));
+      return db.from('operations').update({ ended_at: t.toISOString() }).eq('id', op.id);
+    }
+
+    async function loadMyOp() {
+      myOp = null;
+      warnStage = 0;
+      if (!myTruck) { renderOp(); return; }
+      var r = await db.from('operations').select('*')
+        .eq('truck_id', myTruck.id).is('ended_at', null)
+        .order('started_at', { ascending: false });
+      if (r.error) { msg.textContent = '영업 상태를 불러오지 못했어요: ' + r.error.message; return; }
+      var now = Date.now();
+      for (var i = 0; i < r.data.length; i++) {
+        var op = r.data[i];
+        if (!myOp && new Date(op.planned_end_at).getTime() > now) {
+          myOp = op;
+        } else {
+          await closeOp(op, op.planned_end_at);
+        }
+      }
+      renderOp();
+    }
+
+    $('opStartBtn').onclick = async function () {
+      if (!myTruck) { msg.textContent = '먼저 트럭을 등록해 주세요.'; return; }
+      var btn = this;
+      btn.disabled = true;
+      msg.textContent = '현재 위치를 확인하는 중...';
+      try {
+        await loadMyOp();
+        if (myOp) { msg.textContent = '이미 영업 중이에요.'; return; }
+        var pos = await getPosition();
+        var hours = Number($('opHours').value);
+        var planned = new Date(Date.now() + hours * 3600 * 1000).toISOString();
+        var r = await db.from('operations').insert({
+          truck_id: myTruck.id,
+          lat: pos.coords.latitude,
+          lng: pos.coords.longitude,
+          planned_end_at: planned
+        }).select().single();
+        if (r.error) throw r.error;
+        myOp = r.data;
+        warnStage = 0;
+        renderOp();
+        msg.textContent = '영업을 시작했어요! 지도에 표시돼요.';
+        await loadPins();
+      } catch (e) {
+        msg.textContent = '영업을 시작하지 못했어요: ' + (e.message || e);
+      } finally {
+        btn.disabled = false;
+      }
+    };
+
+    async function extendOp() {
+      if (!myOp) return;
+      var startMs = new Date(myOp.started_at).getTime();
+      var capMs = startMs + 24 * 3600 * 1000 - 1000;
+      var curMs = new Date(myOp.planned_end_at).getTime();
+      if (curMs >= capMs) {
+        msg.textContent = '영업은 시작 후 최대 24시간까지만 연장할 수 있어요. 필요하면 종료하고 다시 시작해 주세요.';
+        return;
+      }
+      var nextMs = Math.min(curMs + 3600 * 1000, capMs);
+      var r = await db.from('operations')
+        .update({ planned_end_at: new Date(nextMs).toISOString() })
+        .eq('id', myOp.id).select().single();
+      if (r.error) { msg.textContent = '연장하지 못했어요: ' + r.error.message; return; }
+      myOp = r.data;
+      warnStage = 0;
+      $('warnBanner').hidden = true;
+      renderOp();
+      msg.textContent = '영업 시간을 연장했어요.';
+      await loadPins();
+    }
+
+    async function endOp() {
+      if (!myOp) return;
+      var r = await closeOp(myOp, new Date().toISOString());
+      if (r.error) { msg.textContent = '종료하지 못했어요: ' + r.error.message; return; }
+      myOp = null;
+      warnStage = 0;
+      renderOp();
+      msg.textContent = '영업을 종료했어요.';
+      await loadPins();
+    }
+
+    $('opExtendBtn').onclick = extendOp;
+    $('warnExtendBtn').onclick = extendOp;
+    $('opEndBtn').onclick = endOp;
+    $('warnEndBtn').onclick = endOp;
+
+    function showWarn(min, stage) {
+      $('warnText').textContent = (stage === 2 ? '마지막 알림: ' : '') +
+        '영업 종료 예정까지 약 ' + min + '분 남았어요. 계속 영업하시나요?';
+      $('warnBanner').hidden = false;
+    }
+
+    setInterval(async function () {
+      if (!myOp) return;
+      var remain = new Date(myOp.planned_end_at).getTime() - Date.now();
+      if (remain <= 0) {
+        var op = myOp;
+        myOp = null;
+        renderOp();
+        await closeOp(op, op.planned_end_at);
+        msg.textContent = '종료 예정 시각이 되어 영업이 자동으로 종료됐어요.';
+        await loadPins();
+        return;
+      }
+      if (remain <= 10 * 60000) {
+        var stage = remain <= 5 * 60000 ? 2 : 1;
+        if (stage > warnStage) {
+          warnStage = stage;
+          try { if (navigator.vibrate) navigator.vibrate(200); } catch (e) {}
+        }
+        showWarn(Math.ceil(remain / 60000), stage);
+      }
+    }, 15000);
+
+    // ---------- 손님 지도: 영업 중인 트럭 ----------
+    var mapReady = new Promise(function (resolve) {
+      kakao.maps.load(function () {
+        map = new kakao.maps.Map($('map'), {
+          center: new kakao.maps.LatLng(37.5665, 126.9780),
+          level: 5
+        });
+        resolve();
+      });
+    });
+
+    function typeLabel(t) {
+      var top = foodTypes.find(function (x) { return x.id === t.food_type_id; });
+      var label = top ? top.name : '';
+      if (top && top.name === '기타') {
+        if (t.sub_type_id) {
+          var sub = foodTypes.find(function (x) { return x.id === t.sub_type_id; });
+          if (sub) label = sub.name;
+        } else if (t.custom_food_name) {
+          label = t.custom_food_name;
+        }
+      }
+      return label;
+    }
+
+    function showDetail(op) {
+      var t = op.trucks;
+      $('dName').textContent = t.name;
+      $('dType').textContent = typeLabel(t);
+      if (t.photo_url) { $('dPhoto').src = t.photo_url; $('dPhoto').hidden = false; }
+      else { $('dPhoto').hidden = true; }
+      var ul = $('dMenu');
+      ul.innerHTML = '';
+      (t.menu || []).forEach(function (m) {
+        var li = document.createElement('li');
+        li.textContent = m.name + '  ' + formatWon(m.price) + '원';
+        ul.appendChild(li);
+      });
+      var pays = (t.payment_methods || []).join(', ');
+      $('dPay').textContent = '결제: ' + (pays || '정보 없음');
+      $('dEnd').textContent = '영업 종료 예정 ' + fmtTime(op.planned_end_at) + ' (사장님이 정한 시간이에요)';
+      $('detail').hidden = false;
+      $('detail').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    function drawPins() {
+      mapMarkers.forEach(function (m) { m.setMap(null); });
+      mapMarkers = [];
+      var filter = $('filterType').value;
+      var shown = 0;
+      pinData.forEach(function (op) {
+        var t = op.trucks;
+        if (filter && String(t.food_type_id) !== filter) return;
+        var pos = new kakao.maps.LatLng(op.lat, op.lng);
+        var marker = new kakao.maps.Marker({ map: map, position: pos, title: t.name });
+        kakao.maps.event.addListener(marker, 'click', function () { showDetail(op); });
+        var label = document.createElement('div');
+        label.className = 'pinLabel';
+        label.textContent = t.name;
+        label.onclick = function () { showDetail(op); };
+        var overlay = new kakao.maps.CustomOverlay({
+          map: map, position: pos, content: label, yAnchor: 2.4, clickable: true
+        });
+        mapMarkers.push(marker);
+        mapMarkers.push(overlay);
+        shown++;
+      });
+      $('pinCount').textContent = '지금 영업 중인 트럭 ' + shown + '곳';
+    }
+
+    async function loadPins() {
+      await mapReady;
+      await foodTypesReady;
+      var r = await db.from('operations')
+        .select('id, lat, lng, planned_end_at, trucks(id, name, food_type_id, sub_type_id, custom_food_name, menu, payment_methods, photo_url)')
+        .is('ended_at', null)
+        .gt('planned_end_at', new Date().toISOString());
+      if (r.error) { msg.textContent = '지도 정보를 불러오지 못했어요: ' + r.error.message; return; }
+      pinData = r.data.filter(function (o) { return o.trucks; });
+      drawPins();
+    }
+
+    $('filterType').onchange = drawPins;
+    $('reloadBtn').onclick = loadPins;
+    $('dClose').onclick = function () { $('detail').hidden = true; };
+
+    $('locBtn').onclick = async function () {
+      msg.textContent = '위치를 확인하는 중...';
+      try {
+        var pos = await getPosition();
+        await mapReady;
+        var p = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        map.setCenter(p);
+        if (!myCircle) {
+          myCircle = new kakao.maps.Circle({
+            map: map, center: p, radius: 20,
+            strokeWeight: 2, strokeColor: '#1971c2', strokeOpacity: 1,
+            fillColor: '#1971c2', fillOpacity: 0.4
+          });
+        } else {
+          myCircle.setPosition(p);
+        }
+        msg.textContent = '내 위치로 이동했어요.';
+      } catch (e) {
+        msg.textContent = e.message;
       }
     };
 
@@ -357,11 +683,13 @@
         currentProfile = null;
         loadedFor = null;
         myTruck = null;
+        myOp = null;
         statusEl.textContent = '로그인하지 않았어요';
         $('ownerBtn').hidden = true;
         $('logoutBtn').hidden = true;
         $('showAuthBtn').hidden = false;
         $('ownerBox').hidden = true;
+        $('warnBanner').hidden = true;
         return;
       }
 
@@ -380,6 +708,7 @@
       $('ownerBtn').hidden = false;
       $('ownerBtn').textContent = currentProfile.is_owner ? '사장님 모드 끄기' : '사장님 모드 켜기';
       $('ownerBox').hidden = !currentProfile.is_owner;
+      if (!currentProfile.is_owner) $('warnBanner').hidden = true;
 
       if (currentProfile.is_owner && loadedFor !== session.user.id) {
         loadedFor = session.user.id;
@@ -425,28 +754,11 @@
       await refresh();
     };
 
+    // ---------- 시작 ----------
     var foodTypesReady = loadFoodTypes();
     refresh();
-
-    // ---------- 지도 ----------
-    kakao.maps.load(function () {
-      var center = new kakao.maps.LatLng(37.5665, 126.9780);
-      var map = new kakao.maps.Map($('map'), { center: center, level: 4 });
-      var marker = new kakao.maps.Marker({ map: map, position: center });
-
-      $('locBtn').onclick = function () {
-        if (!navigator.geolocation) { msg.textContent = '이 브라우저는 위치 기능을 지원하지 않아요.'; return; }
-        msg.textContent = '위치를 확인하는 중...';
-        navigator.geolocation.getCurrentPosition(function (pos) {
-          var p = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-          map.setCenter(p);
-          marker.setPosition(p);
-          msg.textContent = '내 위치로 이동했어요.';
-        }, function () {
-          msg.textContent = '위치를 가져오지 못했어요. 브라우저의 위치 권한을 확인해 주세요.';
-        });
-      };
-    });
+    loadPins();
+    setInterval(loadPins, 60000);
   </script>
 </body>
 </html>
