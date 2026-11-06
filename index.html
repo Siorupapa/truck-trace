@@ -166,12 +166,9 @@
   </div>
 
   <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
-  <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=3cc551cae35635f614a0f20be5e55c3e&autoload=false"></script>
+  <script src="config.js"></script>
   <script>
-    var db = supabase.createClient(
-      'https://wzapvxusmrffckciclfc.supabase.co',
-      'sb_publishable_HEZVmP6gHAkHV0l8ud7gYQ_Lo0MKDnv'
-    );
+    var db = supabase.createClient(APP_CONFIG.SUPABASE_URL, APP_CONFIG.SUPABASE_KEY);
 
     function $(id) { return document.getElementById(id); }
     var msg = $('msg');
@@ -603,15 +600,25 @@
     }, 15000);
 
     // ---------- 손님 지도: 영업 중인 트럭 ----------
-    var mapReady = new Promise(function (resolve) {
-      kakao.maps.load(function () {
-        map = new kakao.maps.Map($('map'), {
-          center: new kakao.maps.LatLng(37.5665, 126.9780),
-          level: 5
+    var mapReady = new Promise(function (resolve, reject) {
+      var s = document.createElement('script');
+      s.src = 'https://dapi.kakao.com/v2/maps/sdk.js?appkey=' + APP_CONFIG.KAKAO_KEY + '&autoload=false';
+      s.onload = function () {
+        kakao.maps.load(function () {
+          map = new kakao.maps.Map($('map'), {
+            center: new kakao.maps.LatLng(37.5665, 126.9780),
+            level: 5
+          });
+          resolve();
         });
-        resolve();
-      });
+      };
+      s.onerror = function () {
+        msg.textContent = '지도 서비스를 불러오지 못했어요.';
+        reject(new Error('kakao sdk load failed'));
+      };
+      document.head.appendChild(s);
     });
+    mapReady.catch(function () {});
 
     function typeLabel(t) {
       var top = foodTypes.find(function (x) { return x.id === t.food_type_id; });
